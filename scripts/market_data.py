@@ -1,0 +1,363 @@
+"""
+market_data.py
+==============
+Market data download layer using Twelve Data API.
+Replaces yfinance for historical intraday (5-minute) data.
+
+Features:
+- Pulls SPY and QQQ 5-minute intraday bars
+- Timezone-aware (America/New_York)
+- Local CSV cache to avoid redundant API calls
+- Rate limit management (free plan: ~800 requests/day)
+- Robust error handling for missing data and edge cases
+
+Usage:
+    from market_data import MarketDataFetcher
+
+    fetcher = MarketDataFetcher(api_key="YOUR_KEY_HERE")
+    df = fetcher.get_bars_around_event(
+        ticker="SPY",
+        event_time="2024-03-20 14:00:00",
+        window_minutes=60
+    )
+"""
+
+import os
+import time
+import logging
+import requests
+import pandas as pd
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# ── Logging setup ────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+log = logging.getLogger(__name__)
+
+# ── Constants ────────────────────────────────────────────────────────────────
+TWELVE_DATA_BASE_URL = "https://api.twelvedata.com/time_series"
+TICKERS              = ["SPY", "QQQ"]
+INTERVAL             = "5min"
+NY_TZ                = ZoneInfo("America/New_York")
+UTC_TZ               = ZoneInfo("UTC")
+
+# Free plan: 800 requests/day, 8 requests/minute
+REQUESTS_PER_MINUTE  = 8
+REQUEST_DELAY_SEC    = 60 / REQUESTS_PER_MINUTE  # ~7.5 seconds between calls
+
+
+# ── MarketDataFetcher ────────────────────────────────────────────────────────
+class MarketDataFetcher:
+    """
+    Downloads and caches 5-minute intraday bars from Twelve Data.
+
+    Parameters
+    ----------
+    api_key : str
+        Your Twelve Data API key. Get one free at https://twelvedata.com
+    cache_dir : str
+        Directory where CSV cache files are stored. Default: './cache'
+    """
+
+    def __init__(self, api_key: str, cache_dir: str = "./cache"):
+        if not api_key or api_key == "YOUR_KEY_HERE":
+            raise ValueError(
+                "Please provide a valid Twelve Data API key.\n"
+                "Get a free key at: https://twelvedata.com/pricing"
+            )
+        self.api_key   = api_key
+        self.cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
+        self._last_request_time = 0.0  # for rate limiting
+
+    # ── Public interface ──────────────────────────────────────────────────────
+
+    def get_bars_around_event(
+        self,
+        ticker: str,
+        event_time: str | datetime,
+        window_minutes: int = 60,
+    ) -> pd.DataFrame:
+        """
+        Return 5-minute bars for `ticker` in the window
+        [event_time - window_minutes, event_time + window_minutes].
+
+        Parameters
+        ----------
+        ticker         : e.g. "SPY" or "QQQ"
+        event_time     : event timestamp (string "YYYY-MM-DD HH:MM:SS" or datetime)
+        window_minutes : how many minutes before AND after the event to include
+
+        Returns
+        -------
+        pd.DataFrame with columns: [open, high, low, close, volume]
+        Index: DatetimeIndex (timezone-aware, America/New_York)
+        """
+        ticker     = ticker.upper()
+        event_dt   = self._parse_event_time(event_time)
+        start_dt   = event_dt - timedelta(minutes=window_minutes)
+        end_dt     = event_dt + timedelta(minutes=window_minutes)
+
+        log.info(f"Fetching {ticker} | event: {event_dt} | window: ±{window_minutes}min")
+
+        # Pull data (from cache if available, else API)
+        df = self._get_data(ticker, start_dt, end_dt)
+
+        if df.empty:
+            log.warning(f"No data returned for {ticker} around {event_dt}")
+            return df
+
+        # Return the full series — trimming is handled in extract_event_window_metrics
+        # by bar index arithmetic, not by timestamp. Trimming here by end_dt cuts off
+        # post-event bars for pre-market events (08:30 ET) since end_dt = 10:00 AM.
+        return df
+
+        return df
+
+    def prefetch_events(
+        self,
+        events_df: pd.DataFrame,
+        tickers: list[str] = TICKERS,
+        window_minutes: int = 60,
+    ) -> None:
+        """
+        Pre-download and cache data for all events in bulk.
+        Respects rate limits. Run this once before your analysis.
+
+        Parameters
+        ----------
+        events_df      : DataFrame with a 'timestamp' column
+        tickers        : list of tickers to fetch (default: SPY + QQQ)
+        window_minutes : window around each event to cache
+        """
+        timestamps = pd.to_datetime(events_df["timestamp"])
+        log.info(
+            f"Prefetching {len(timestamps)} events × {len(tickers)} tickers"
+        )
+
+        for ticker in tickers:
+            for i, event_time in enumerate(timestamps):
+                log.info(f"[{i+1}/{len(timestamps)}] {ticker} @ {event_time}")
+                try:
+                    self.get_bars_around_event(ticker, event_time, window_minutes)
+                except Exception as e:
+                    log.error(f"Failed for {ticker} @ {event_time}: {e}")
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _get_data(
+        self,
+        ticker: str,
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> pd.DataFrame:
+        """
+        Check cache first; if miss, fetch from API and write to cache.
+        Cache is keyed by ticker + date (one CSV per trading day).
+        """
+        # Always include the previous calendar day so that pre-market events
+        # (e.g. CPI at 08:30 ET) have enough prior bars for the pre-event window.
+        # Also include the next calendar day to ensure enough post-event bars
+        # when the event occurs near market open (09:30 ET).
+        start_dt_with_buffer = start_dt - timedelta(days=1)
+        end_dt_with_buffer   = end_dt + timedelta(days=1)
+        dates_needed = self._dates_in_range(start_dt_with_buffer, end_dt_with_buffer)
+        frames       = []
+
+        for date in dates_needed:
+            cached = self._load_from_cache(ticker, date)
+            if cached is not None:
+                frames.append(cached)
+            else:
+                fetched = self._fetch_day_from_api(ticker, date)
+                if fetched is not None and not fetched.empty:
+                    self._save_to_cache(ticker, date, fetched)
+                    frames.append(fetched)
+
+        if not frames:
+            return pd.DataFrame()
+
+        df = pd.concat(frames).sort_index()
+        df = df[~df.index.duplicated(keep="first")]
+        return df
+
+    def _fetch_day_from_api(
+        self,
+        ticker: str,
+        date: datetime.date,
+    ) -> pd.DataFrame | None:
+        """
+        Call Twelve Data API for one ticker on one trading day.
+        Returns a DataFrame or None on failure.
+        """
+        # Build start/end strings — start at 07:00 to capture pre-market
+        # events like CPI, NFP, GDP which release at 08:30 ET
+        start_str = f"{date} 07:00:00"
+        end_str   = f"{date} 16:30:00"
+
+        params = {
+            "symbol":     ticker,
+            "interval":   INTERVAL,
+            "start_date": start_str,
+            "end_date":   end_str,
+            "timezone":   "America/New_York",
+            "format":     "JSON",
+            "outputsize": 200,   # enough for a full trading day at 5min
+            "apikey":     self.api_key,
+        }
+
+        self._rate_limit_wait()
+
+        try:
+            response = requests.get(TWELVE_DATA_BASE_URL, params=params, timeout=15)
+            response.raise_for_status()
+            payload  = response.json()
+        except requests.RequestException as e:
+            log.error(f"API request failed for {ticker} on {date}: {e}")
+            return None
+
+        # Twelve Data returns {"status": "error", ...} on bad requests
+        if payload.get("status") == "error":
+            log.error(
+                f"Twelve Data error for {ticker} on {date}: "
+                f"{payload.get('message', 'unknown error')}"
+            )
+            return None
+
+        values = payload.get("values")
+        if not values:
+            log.warning(f"No values in response for {ticker} on {date}")
+            return None
+
+        df = self._parse_response(values)
+        log.info(f"  API → {ticker} {date}: {len(df)} bars fetched")
+        return df
+
+    def _parse_response(self, values: list[dict]) -> pd.DataFrame:
+        """
+        Convert Twelve Data JSON values list to a clean DataFrame.
+        """
+        df = pd.DataFrame(values)
+
+        # Parse datetime and set as index
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        df["datetime"] = df["datetime"].dt.tz_localize(NY_TZ)
+        df = df.set_index("datetime").sort_index()
+
+        # Cast OHLCV columns to float/int
+        df = df.rename(columns={"volume": "volume"})
+        for col in ["open", "high", "low", "close"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0).astype(int)
+
+        return df[["open", "high", "low", "close", "volume"]]
+
+    # ── Cache helpers ─────────────────────────────────────────────────────────
+
+    def _cache_path(self, ticker: str, date) -> str:
+        """Return the cache CSV path for a given ticker and date."""
+        return os.path.join(self.cache_dir, f"{ticker}_{date}.csv")
+
+    def _load_from_cache(self, ticker: str, date) -> pd.DataFrame | None:
+        """Load a cached CSV if it exists. Returns None on miss."""
+        path = self._cache_path(ticker, date)
+        if not os.path.exists(path):
+            return None
+
+        try:
+            df = pd.read_csv(path, index_col="datetime", parse_dates=True)
+            # Normalize timezone: strip any existing tz then re-localize to NY
+            # This handles cases where pandas reads back UTC offset strings
+            # (-05:00, -04:00) as fixed offsets instead of America/New_York
+            if df.index.tzinfo is not None:
+                df.index = df.index.tz_convert(NY_TZ)
+            else:
+                df.index = df.index.tz_localize(NY_TZ)
+            log.info(f"  Cache HIT  → {ticker} {date} ({len(df)} bars)")
+            return df
+        except Exception as e:
+            log.warning(f"Cache read failed for {ticker} {date}: {e}")
+            return None
+
+    def _save_to_cache(self, ticker: str, date, df: pd.DataFrame) -> None:
+        """Write a DataFrame to the CSV cache."""
+        path = self._cache_path(ticker, date)
+        try:
+            df.to_csv(path)
+            log.info(f"  Cache WRITE → {ticker} {date} → {path}")
+        except Exception as e:
+            log.warning(f"Cache write failed for {ticker} {date}: {e}")
+
+    # ── Rate limiting ─────────────────────────────────────────────────────────
+
+    def _rate_limit_wait(self) -> None:
+        """
+        Enforce minimum delay between API calls to stay within
+        Twelve Data free plan limits (~8 requests/minute).
+        """
+        elapsed = time.time() - self._last_request_time
+        if elapsed < REQUEST_DELAY_SEC:
+            wait = REQUEST_DELAY_SEC - elapsed
+            log.debug(f"Rate limit: waiting {wait:.1f}s")
+            time.sleep(wait)
+        self._last_request_time = time.time()
+
+    # ── Utility ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_event_time(event_time: str | datetime) -> datetime:
+        """
+        Parse an event timestamp to a timezone-aware datetime (America/New_York).
+        Accepts strings like "2024-03-20 14:00:00" or datetime objects.
+        """
+        if isinstance(event_time, str):
+            event_time = datetime.fromisoformat(event_time)
+
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=NY_TZ)
+        else:
+            event_time = event_time.astimezone(NY_TZ)
+
+        return event_time
+
+    @staticmethod
+    def _dates_in_range(start_dt: datetime, end_dt: datetime) -> list:
+        """Return a list of calendar dates covered by [start_dt, end_dt]."""
+        dates  = []
+        cursor = start_dt.date()
+        while cursor <= end_dt.date():
+            dates.append(cursor)
+            cursor += timedelta(days=1)
+        return dates
+
+
+# ── Quick test (run this file directly to verify your key works) ─────────────
+if __name__ == "__main__":
+    import sys
+
+    API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "YOUR_KEY_HERE")
+
+    try:
+        fetcher = MarketDataFetcher(api_key=API_KEY)
+    except ValueError as e:
+        print(f"\nERROR: {e}")
+        sys.exit(1)
+
+    # Test: fetch SPY bars around a known FOMC date
+    test_event = "2024-03-20 14:00:00"
+    print(f"\nTest: fetching SPY bars around {test_event}\n")
+
+    df = fetcher.get_bars_around_event(
+        ticker="SPY",
+        event_time=test_event,
+        window_minutes=60
+    )
+
+    if df.empty:
+        print("No data returned — check your API key or event date.")
+    else:
+        print(df.head(10).to_string())
+        print(f"\n✓ {len(df)} bars returned")
