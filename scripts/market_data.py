@@ -23,11 +23,14 @@ Usage:
 """
 
 import os
+import subprocess
+import sys
 import time
 import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 # ── Logging setup ────────────────────────────────────────────────────────────
@@ -47,6 +50,163 @@ UTC_TZ               = ZoneInfo("UTC")
 # Free plan: 800 requests/day, 8 requests/minute
 REQUESTS_PER_MINUTE  = 8
 REQUEST_DELAY_SEC    = 60 / REQUESTS_PER_MINUTE  # ~7.5 seconds between calls
+
+# ── Full-cache paths (written by fetch_full_data.py) ─────────────────────────
+THIS_DIR         = Path(__file__).resolve().parent
+FULL_CACHE_DIR   = THIS_DIR.parent / "data" / "cache"
+FULL_CACHE_PATHS = {
+    ticker: FULL_CACHE_DIR / f"{ticker}_full_5min.csv"
+    for ticker in TICKERS
+}
+
+# ── In-memory store so we only parse the CSV once per process ─────────────────
+_FULL_CACHE: dict[str, pd.DataFrame] = {}
+
+
+# ── New primary interface: bulk cache ─────────────────────────────────────────
+
+def load_or_fetch_full_data(
+    ticker: str,
+    start_date: str = "2015-01-01",
+    api_key: str | None = None,
+) -> pd.DataFrame:
+    """
+    Return the complete 5-minute price history for `ticker` as a
+    timezone-aware DataFrame (America/New_York), filtered to regular
+    trading hours (09:30–16:00 ET).
+
+    Lookup order
+    ------------
+    1. In-memory cache (fastest — avoids re-parsing CSV on repeated calls)
+    2. data/cache/{TICKER}_full_5min.csv written by fetch_full_data.py
+    3. Calls fetch_full_data.py as a subprocess to download on-demand
+       (requires TWELVE_DATA_API_KEY to be set in the environment)
+
+    Parameters
+    ----------
+    ticker     : "SPY" or "QQQ"
+    start_date : earliest date to include (passed to fetch_full_data.py
+                 if a download is needed)
+    api_key    : Twelve Data API key; if None, falls back to the
+                 TWELVE_DATA_API_KEY environment variable
+
+    Returns
+    -------
+    pd.DataFrame with columns [open, high, low, close, volume] and a
+    timezone-aware DatetimeIndex (America/New_York), sorted ascending.
+    Returns an empty DataFrame on failure.
+    """
+    ticker = ticker.upper()
+
+    # 1 ── in-memory hit
+    if ticker in _FULL_CACHE:
+        log.debug("Full cache HIT (memory): %s", ticker)
+        return _FULL_CACHE[ticker]
+
+    csv_path = FULL_CACHE_PATHS.get(ticker)
+    if csv_path is None:
+        log.error("Unknown ticker: %s", ticker)
+        return pd.DataFrame()
+
+    # 2 ── CSV hit
+    if csv_path.exists():
+        df = _load_full_csv(csv_path, ticker)
+        if df is not None and not df.empty:
+            _FULL_CACHE[ticker] = df
+            return df
+        log.warning("Cached CSV for %s exists but could not be loaded.", ticker)
+
+    # 3 ── download via fetch_full_data.py
+    log.info(
+        "%s: full cache CSV not found — running fetch_full_data.py to download.",
+        ticker,
+    )
+    key = api_key or os.environ.get("TWELVE_DATA_API_KEY", "")
+    if not key:
+        log.error(
+            "Cannot auto-download: TWELVE_DATA_API_KEY not set. "
+            "Run `python fetch_full_data.py` manually first, or set the env var."
+        )
+        return pd.DataFrame()
+
+    script_path = THIS_DIR / "fetch_full_data.py"
+    cmd = [
+        sys.executable, str(script_path),
+        "--tickers", ticker,
+        "--start", start_date,
+        "--api-key", key,
+        "--cache-dir", str(FULL_CACHE_DIR),
+    ]
+    log.info("Running: %s", " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=False)
+
+    if result.returncode != 0:
+        log.error("fetch_full_data.py exited with code %d", result.returncode)
+        return pd.DataFrame()
+
+    # Load the freshly written CSV
+    if csv_path.exists():
+        df = _load_full_csv(csv_path, ticker)
+        if df is not None and not df.empty:
+            _FULL_CACHE[ticker] = df
+            return df
+
+    log.error("fetch_full_data.py ran but no CSV was produced for %s.", ticker)
+    return pd.DataFrame()
+
+
+def slice_event_window(
+    full_df: pd.DataFrame,
+    event_ts: "pd.Timestamp | datetime",
+    pre_minutes: int = 90,
+    post_minutes: int = 90,
+) -> pd.DataFrame:
+    """
+    Slice a pre-loaded full history DataFrame to the window around one event.
+
+    Parameters
+    ----------
+    full_df      : output of load_or_fetch_full_data()
+    event_ts     : the macro announcement timestamp (tz-aware, ET)
+    pre_minutes  : minutes of data to include before the event
+    post_minutes : minutes of data to include after the event
+
+    Returns
+    -------
+    Subset of full_df within [event_ts - pre_minutes, event_ts + post_minutes].
+    """
+    if isinstance(event_ts, str):
+        event_ts = pd.Timestamp(event_ts, tz=NY_TZ)
+    if event_ts.tzinfo is None:
+        event_ts = event_ts.replace(tzinfo=NY_TZ)
+    else:
+        event_ts = event_ts.astimezone(NY_TZ)
+
+    start = event_ts - timedelta(minutes=pre_minutes)
+    end   = event_ts + timedelta(minutes=post_minutes)
+
+    mask = (full_df.index >= start) & (full_df.index <= end)
+    return full_df.loc[mask].copy()
+
+
+def _load_full_csv(path: Path, ticker: str) -> pd.DataFrame | None:
+    """Read and validate the full CSV written by fetch_full_data.py."""
+    try:
+        df = pd.read_csv(path, index_col="datetime", parse_dates=True)
+        if df.index.tzinfo is None:
+            df.index = df.index.tz_localize(NY_TZ)
+        else:
+            df.index = df.index.tz_convert(NY_TZ)
+        df = df.sort_index()
+        df = df[~df.index.duplicated(keep="first")]
+        log.info(
+            "Full cache LOAD: %s | %d bars | %s → %s",
+            ticker, len(df), df.index.min().date(), df.index.max().date(),
+        )
+        return df
+    except Exception as exc:
+        log.error("Failed to load %s: %s", path, exc)
+        return None
 
 
 # ── MarketDataFetcher ────────────────────────────────────────────────────────

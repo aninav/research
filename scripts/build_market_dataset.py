@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 # Local data layer — sits in the same scripts/ folder
-from market_data import MarketDataFetcher
+from market_data import MarketDataFetcher, load_or_fetch_full_data, slice_event_window
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -328,14 +328,24 @@ def extract_event_window_metrics(
 
 def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.DataFrame:
     """
-    Full pipeline:
-      1. Load events
-      2. Initialise MarketDataFetcher (Twelve Data + local cache)
-      3. Prefetch all event windows in bulk (respects rate limits)
-      4. Extract window metrics per event
-      5. Save to CSV
+    Refactored full pipeline using bulk-cache architecture.
 
-    Returns the final DataFrame.
+    NEW flow (replaces old per-event download approach)
+    ---------------------------------------------------
+    OLD: for each event -> API call -> slice -> compute
+         ~480+ API calls for 240 events x 2 tickers
+
+    NEW: load full history ONCE per ticker (from CSV cache) -> slice in memory
+         ~0 API calls after fetch_full_data.py has run once
+
+    Steps
+    -----
+    1. Load events CSV
+    2. Load full 5-min history for each ticker from cache
+    3. For each event: slice the in-memory DataFrame -> compute metrics
+    4. Save output CSV
+
+    Pre-requisite: run `python fetch_full_data.py --start 2015-01-01` once.
     """
     events = load_events(events_path)
 
@@ -347,25 +357,27 @@ def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.D
         events = events.head(limit)
         log.info("Limit set: processing first %d events only.", limit)
 
-    # --- initialise the Twelve Data fetcher ---
+    # Step 2: load full history for both tickers (memory -> CSV -> download)
+    log.info("=== Loading full 5-min history (no per-event API calls) ===")
+    full_data: dict[str, pd.DataFrame] = {}
     api_key = os.environ.get("TWELVE_DATA_API_KEY", "")
-    if not api_key:
-        log.error(
-            "TWELVE_DATA_API_KEY environment variable not set.\n"
-            "  Run:  export TWELVE_DATA_API_KEY=your_key_here\n"
-            "  Get a free key at: https://twelvedata.com/pricing"
-        )
-        sys.exit(1)
 
-    fetcher = MarketDataFetcher(api_key=api_key, cache_dir=str(CACHE_DIR))
+    for ticker in TICKERS:
+        df = load_or_fetch_full_data(ticker=ticker, api_key=api_key)
+        if df.empty:
+            log.error(
+                "%s: full history not available. "
+                "Run `python fetch_full_data.py` first.", ticker
+            )
+            sys.exit(1)
+        full_data[ticker] = df
+        log.info("%s: %d bars in memory (%s -> %s)",
+                 ticker, len(df), df.index.min().date(), df.index.max().date())
 
-    # --- bulk prefetch: download + cache everything before the analysis loop ---
-    log.info("=== Prefetching market data for all events ===")
-    fetcher.prefetch_events(events_df=events, tickers=TICKERS, window_minutes=90)
-
-    # --- main event loop ---
-    log.info("=== Computing event window metrics ===")
+    # Step 3: event loop - pure in-memory slicing, zero API calls
+    log.info("=== Computing event window metrics (slicing from memory) ===")
     results = []
+    skipped = 0
 
     for _, row in events.iterrows():
         event_id   = row["event_id"]
@@ -385,20 +397,26 @@ def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.D
         valid_event = True
 
         for ticker in TICKERS:
-            price_df = download_market_data(
-                fetcher=fetcher,
-                ticker=ticker,
+            # Slice in memory - no API call
+            window_df = slice_event_window(
+                full_df=full_data[ticker],
                 event_ts=event_ts,
-                window_minutes=90,
+                pre_minutes=90,
+                post_minutes=90,
             )
 
-            if price_df.empty:
-                log.warning("SKIP event_id=%s (%s): no market data.", event_id, ticker)
+            if window_df.empty:
+                log.warning(
+                    "SKIP event_id=%s (%s): no bars in +/-90-min window around %s.",
+                    event_id, ticker, event_ts,
+                )
                 valid_event = False
                 break
 
+            price_series = window_df["close"].rename("Close")
+
             metrics = extract_event_window_metrics(
-                price_series=price_df["Close"],
+                price_series=price_series,
                 event_ts=event_ts,
                 ticker=ticker,
                 event_id=event_id,
@@ -413,7 +431,10 @@ def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.D
         if valid_event:
             results.append(row_metrics)
         else:
+            skipped += 1
             log.warning("Event event_id=%s skipped entirely.", event_id)
+
+    log.info("=== Done: %d events processed, %d skipped ===", len(results), skipped)
 
     if not results:
         log.error("No events produced valid metrics. Output file will not be created.")
@@ -421,7 +442,6 @@ def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.D
 
     output_df = pd.DataFrame(results)
 
-    # Reorder columns for readability
     id_cols     = ["event_id", "timestamp", "event_name", "event_category", "event_flag"]
     metric_cols = [c for c in output_df.columns if c not in id_cols]
     output_df   = output_df[id_cols + sorted(metric_cols)]
