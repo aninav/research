@@ -73,9 +73,9 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
+
+
+
 THIS_DIR    = Path(__file__).resolve().parent
 DATA_DIR    = THIS_DIR.parent / "data"
 TABLES_DIR  = DATA_DIR / "tables"
@@ -84,30 +84,30 @@ MASTER_PATH = DATA_DIR / "master_dataset.csv"
 TICKERS    = ["SPY", "QQQ"]
 CATEGORIES = ["inflation", "labor", "monetary_policy", "consumption", "growth"]
 
-# 2021-2022 + early 2023 = high-inflation regime (CPI peaked June 2022 at 9.1%)
+
 HIGH_INFLATION_YEARS  = {2021, 2022}
 HIGH_INFLATION_CUTOFF = pd.Timestamp("2023-07-01", tz="America/New_York")
 
 
-# ---------------------------------------------------------------------------
-# Data loading and feature engineering
-# ---------------------------------------------------------------------------
+
+
+
 
 def load_dataset(path: Path) -> pd.DataFrame:
     """Load master_dataset.csv and return a clean DataFrame."""
     log.info("Loading dataset from: %s", path)
     df = pd.read_csv(path)
 
-    # Parse timestamp
+
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df["timestamp"] = df["timestamp"].dt.tz_convert("America/New_York")
 
-    # Temporal features
+
     df["year"]    = df["timestamp"].dt.year
     df["month"]   = df["timestamp"].dt.month
     df["quarter"] = df["timestamp"].dt.quarter
 
-    # High-inflation regime dummy (2021–mid-2023)
+
     df["is_high_inflation_regime"] = (df["timestamp"] < HIGH_INFLATION_CUTOFF).astype(int)
 
     log.info("Loaded %d events.", len(df))
@@ -139,22 +139,22 @@ def build_feature_matrix(df: pd.DataFrame, ticker: str) -> tuple[pd.DataFrame, p
     if target_col not in df.columns:
         raise ValueError(f"Column {target_col} not found in dataset.")
 
-    # Drop rows with missing target or pre-event vol
+
     sub = df[[
         "event_category", "year", "month", "quarter",
         "is_high_inflation_regime", target_col, pre_vol_col,
     ]].dropna(subset=[target_col, pre_vol_col]).copy()
 
-    # --- category dummies (omit 'growth' as baseline) ---
+
     cats_to_dummy = ["inflation", "labor", "monetary_policy", "consumption"]
     for cat in cats_to_dummy:
         sub[f"D_{cat}"] = (sub["event_category"] == cat).astype(int)
 
-    # --- quarter dummies (omit Q1 as baseline) ---
+
     for q in [2, 3, 4]:
         sub[f"Q{q}"] = (sub["quarter"] == q).astype(int)
 
-    # --- optional keyword / entity cols if present ---
+
     optional_cols = [
         "kw_inflation", "kw_labor", "kw_monetary", "kw_consumption", "kw_growth",
         "ent_bls", "ent_fed", "ent_bea", "ent_census",
@@ -167,14 +167,14 @@ def build_feature_matrix(df: pd.DataFrame, ticker: str) -> tuple[pd.DataFrame, p
     return sub, y
 
 
-# ---------------------------------------------------------------------------
-# Regression helpers
-# ---------------------------------------------------------------------------
+
+
+
 
 def _run_ols(X: pd.DataFrame, y: pd.Series, model_name: str) -> sm.regression.linear_model.RegressionResultsWrapper:
     """Fit OLS with a constant and log results summary."""
     X_const = sm.add_constant(X, has_constant="add")
-    model   = sm.OLS(y, X_const).fit(cov_type="HC3")  # heteroskedasticity-robust SEs
+    model   = sm.OLS(y, X_const).fit(cov_type="HC3")
     log.info(
         "%s | R²=%.3f | Adj-R²=%.3f | F=%.2f (p=%.4f) | n=%d",
         model_name, model.rsquared, model.rsquared_adj,
@@ -228,9 +228,9 @@ def check_vif(X: pd.DataFrame, model_name: str) -> pd.DataFrame:
     return vif_data
 
 
-# ---------------------------------------------------------------------------
-# Model 1: OLS baseline — category dummies only
-# ---------------------------------------------------------------------------
+
+
+
 
 def model_ols_baseline(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
@@ -243,9 +243,9 @@ def model_ols_baseline(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return results_to_df(result, "OLS_Baseline", ticker)
 
 
-# ---------------------------------------------------------------------------
-# Model 2: OLS with temporal controls
-# ---------------------------------------------------------------------------
+
+
+
 
 def model_ols_temporal(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
@@ -260,9 +260,9 @@ def model_ols_temporal(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return results_to_df(result, "OLS_Temporal", ticker)
 
 
-# ---------------------------------------------------------------------------
-# Model 3: OLS full feature set
-# ---------------------------------------------------------------------------
+
+
+
 
 def model_ols_full(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
@@ -289,9 +289,9 @@ def model_ols_full(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return results_to_df(result, "OLS_Full", ticker)
 
 
-# ---------------------------------------------------------------------------
-# Model 4: Panel OLS (pooled across SPY and QQQ with ticker fixed effect)
-# ---------------------------------------------------------------------------
+
+
+
 
 def model_panel_ols(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -341,9 +341,9 @@ def model_panel_ols(df: pd.DataFrame) -> pd.DataFrame:
     return results_to_df(result, "Panel_OLS", "SPY+QQQ")
 
 
-# ---------------------------------------------------------------------------
-# Model 5: Interaction model — inflation × high-inflation regime
-# ---------------------------------------------------------------------------
+
+
+
 
 def model_interaction(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
@@ -376,9 +376,9 @@ def model_interaction(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return results_to_df(result, "Interaction", ticker)
 
 
-# ---------------------------------------------------------------------------
-# Summary table
-# ---------------------------------------------------------------------------
+
+
+
 
 def build_summary_table(all_results: list[pd.DataFrame]) -> pd.DataFrame:
     """
@@ -406,9 +406,9 @@ def build_summary_table(all_results: list[pd.DataFrame]) -> pd.DataFrame:
     return summary
 
 
-# ---------------------------------------------------------------------------
-# Main pipeline
-# ---------------------------------------------------------------------------
+
+
+
 
 def run_regression_analysis(input_path: Path, tables_dir: Path) -> None:
     tables_dir.mkdir(parents=True, exist_ok=True)
@@ -469,7 +469,7 @@ def run_regression_analysis(input_path: Path, tables_dir: Path) -> None:
     pd.concat(interact_dfs).to_csv(tables_dir / "table_interaction.csv", index=False)
     log.info("Saved: table_interaction.csv")
 
-    # Summary table
+
     summary = build_summary_table(all_results)
     summary.to_csv(tables_dir / "table_regression_summary.csv", index=False)
     log.info("Saved: table_regression_summary.csv")
@@ -477,21 +477,21 @@ def run_regression_analysis(input_path: Path, tables_dir: Path) -> None:
     log.info("\n=== REGRESSION SUMMARY ===")
     print(summary.to_string(index=False))
 
-    # Print nicely formatted coefficient table for the best model (OLS Full)
+
     full_combined = pd.concat(full_dfs)
     log.info("\n=== OLS FULL: COEFFICIENT TABLE ===")
     display_cols = ["ticker", "variable", "coef", "std_err", "t_stat", "p_value", "sig"]
     print(full_combined[display_cols].to_string(index=False))
 
-    # Print interaction model results
+
     interact_combined = pd.concat(interact_dfs)
     log.info("\n=== INTERACTION MODEL: COEFFICIENT TABLE ===")
     print(interact_combined[display_cols].to_string(index=False))
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+
+
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(

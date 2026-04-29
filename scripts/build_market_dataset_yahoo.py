@@ -23,9 +23,9 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-# ---------------------------------------------------------------------------
-# Logging setup
-# ---------------------------------------------------------------------------
+
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s | %(message)s",
@@ -34,27 +34,27 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+
+
+
 TICKERS = ["SPY", "QQQ"]
 
-# 5-minute bar counts for each window
-BARS_PRE_30M   = 6   # 30 min pre-event  (6 × 5 min)
-BARS_POST_5M   = 1   # 5 min post-event  (1 × 5 min)
-BARS_POST_30M  = 6   # 30 min post-event (6 × 5 min)
-BARS_POST_60M  = 12  # 60 min post-event (12 × 5 min)
 
-# Minimum bars required on each side before we attempt extraction
+BARS_PRE_30M   = 6
+BARS_POST_5M   = 1
+BARS_POST_30M  = 6
+BARS_POST_60M  = 12
+
+
 MIN_BARS_REQUIRED = max(BARS_PRE_30M, BARS_POST_60M)
 
-# How many calendar days of data to pull per event (centred around the event)
+
 FETCH_BUFFER_DAYS = 2
 
 
-# ---------------------------------------------------------------------------
-# 1. Load events
-# ---------------------------------------------------------------------------
+
+
+
 
 def load_events(filepath: str) -> pd.DataFrame:
     """
@@ -72,17 +72,17 @@ def load_events(filepath: str) -> pd.DataFrame:
     required_cols = {"event_id", "timestamp", "event_name", "event_category", "event_flag"}
 
     log.info("Loading events from: %s", filepath)
-    df = pd.read_csv(filepath, dtype=str)  # read everything as str first for safe parsing
+    df = pd.read_csv(filepath, dtype=str)
 
-    # --- column check ---
+
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(f"events.csv is missing required columns: {missing}")
 
-    # --- strip whitespace ---
+
     df = df.apply(lambda col: col.str.strip() if col.dtype == "object" else col)
 
-    # --- parse timestamp ---
+
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     bad_ts = df["timestamp"].isna()
     if bad_ts.any():
@@ -90,17 +90,17 @@ def load_events(filepath: str) -> pd.DataFrame:
                     bad_ts.sum(), df.loc[bad_ts, "event_id"].tolist())
     df = df[~bad_ts].copy()
 
-    # --- localise to Eastern (events.csv is assumed ET) ---
+
     df["timestamp"] = df["timestamp"].dt.tz_localize("America/New_York", ambiguous="infer")
 
-    # --- duplicate event_id check ---
+
     dupes = df.duplicated(subset="event_id", keep=False)
     if dupes.any():
         log.warning("Dropping %d rows with duplicate event_id values: %s",
                     dupes.sum(), df.loc[dupes, "event_id"].tolist())
         df = df[~dupes].copy()
 
-    # --- event_flag must be numeric ---
+
     df["event_flag"] = pd.to_numeric(df["event_flag"], errors="coerce")
     bad_flag = df["event_flag"].isna()
     if bad_flag.any():
@@ -113,9 +113,9 @@ def load_events(filepath: str) -> pd.DataFrame:
     return df
 
 
-# ---------------------------------------------------------------------------
-# 2. Download market data
-# ---------------------------------------------------------------------------
+
+
+
 
 def download_market_data(
     ticker: str,
@@ -161,15 +161,15 @@ def download_market_data(
         log.warning("No data returned for %s (%s → %s).", ticker, start, end)
         return pd.DataFrame()
 
-    # yfinance returns a MultiIndex when multiple tickers are passed.
-    # Here we always call one ticker at a time, but flatten just in case.
+
+
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
 
     raw = raw[["Close"]].copy()
     raw.index.name = "datetime"
 
-    # Ensure the index is Eastern-aware
+
     if raw.index.tz is None:
         raw.index = raw.index.tz_localize("UTC").tz_convert("America/New_York")
     else:
@@ -179,9 +179,9 @@ def download_market_data(
     return raw
 
 
-# ---------------------------------------------------------------------------
-# 3. Log returns
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_log_returns(prices: pd.Series) -> pd.Series:
     """
@@ -192,9 +192,9 @@ def compute_log_returns(prices: pd.Series) -> pd.Series:
     return np.log(prices / prices.shift(1))
 
 
-# ---------------------------------------------------------------------------
-# 4. Realized volatility
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_realized_volatility(log_returns: pd.Series) -> float:
     """
@@ -209,9 +209,9 @@ def compute_realized_volatility(log_returns: pd.Series) -> float:
     return float(np.sqrt((r ** 2).sum()))
 
 
-# ---------------------------------------------------------------------------
-# 5. Cumulative return
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_cumulative_return(prices: pd.Series) -> float:
     """
@@ -226,9 +226,9 @@ def compute_cumulative_return(prices: pd.Series) -> float:
     return float(np.log(prices.iloc[-1] / prices.iloc[0]))
 
 
-# ---------------------------------------------------------------------------
-# 6. Extract window metrics for one event + one ticker
-# ---------------------------------------------------------------------------
+
+
+
 
 def extract_event_window_metrics(
     price_series: pd.Series,
@@ -251,8 +251,8 @@ def extract_event_window_metrics(
     -------
     dict of computed metrics, or None if the event should be skipped.
     """
-    # Locate the bar index closest to (and not before) the event timestamp.
-    # We want the first bar whose timestamp is >= event_ts.
+
+
     future_bars = price_series.index[price_series.index >= event_ts]
     if future_bars.empty:
         log.warning("SKIP event_id=%s (%s): no bars at or after event timestamp.", event_id, ticker)
@@ -260,34 +260,34 @@ def extract_event_window_metrics(
 
     event_bar_idx = price_series.index.get_loc(future_bars[0])
 
-    # --- pre-event slice: [event_bar_idx - BARS_PRE_30M, event_bar_idx) ---
+
     pre_start_idx = event_bar_idx - BARS_PRE_30M
     if pre_start_idx < 0:
         log.warning("SKIP event_id=%s (%s): insufficient pre-event bars (need %d, have %d).",
                     event_id, ticker, BARS_PRE_30M, event_bar_idx)
         return None
 
-    # --- post-event slice: [event_bar_idx, event_bar_idx + BARS_POST_60M) ---
+
     post_end_idx = event_bar_idx + BARS_POST_60M
     if post_end_idx > len(price_series):
         log.warning("SKIP event_id=%s (%s): insufficient post-event bars (need %d, have %d after event).",
                     event_id, ticker, BARS_POST_60M, len(price_series) - event_bar_idx)
         return None
 
-    # --- extract price slices ---
+
     pre_prices   = price_series.iloc[pre_start_idx : event_bar_idx]
     post_5m      = price_series.iloc[event_bar_idx : event_bar_idx + BARS_POST_5M  + 1]
     post_30m     = price_series.iloc[event_bar_idx : event_bar_idx + BARS_POST_30M + 1]
     post_60m     = price_series.iloc[event_bar_idx : event_bar_idx + BARS_POST_60M + 1]
 
-    # --- compute log returns ---
-    # Pre-event: we need returns within the pre window (no bar before pre_start)
-    # We include an extra bar before pre_start to get a valid return for pre_start itself.
+
+
+
     pre_prices_with_anchor = price_series.iloc[max(0, pre_start_idx - 1) : event_bar_idx]
     pre_returns = compute_log_returns(pre_prices_with_anchor)
 
-    # Post-event returns — the anchor is the last pre-event bar (event_bar_idx - 1)
-    # so the first return in the post window is relative to that anchor.
+
+
     post_prices_with_anchor_5m  = price_series.iloc[event_bar_idx - 1 : event_bar_idx + BARS_POST_5M  + 1]
     post_prices_with_anchor_30m = price_series.iloc[event_bar_idx - 1 : event_bar_idx + BARS_POST_30M + 1]
     post_prices_with_anchor_60m = price_series.iloc[event_bar_idx - 1 : event_bar_idx + BARS_POST_60M + 1]
@@ -296,22 +296,22 @@ def extract_event_window_metrics(
     post_returns_30m = compute_log_returns(post_prices_with_anchor_30m)
     post_returns_60m = compute_log_returns(post_prices_with_anchor_60m)
 
-    t = ticker  # shorthand for column naming
+    t = ticker
     return {
         f"{t}_rv_pre_30m"  : compute_realized_volatility(pre_returns),
         f"{t}_rv_post_5m"  : compute_realized_volatility(post_returns_5m),
         f"{t}_rv_post_30m" : compute_realized_volatility(post_returns_30m),
         f"{t}_rv_post_60m" : compute_realized_volatility(post_returns_60m),
-        # Cumulative return uses only post prices (no anchor needed for log(P_last/P_first))
+
         f"{t}_ret_5m"      : compute_cumulative_return(post_5m),
         f"{t}_ret_30m"     : compute_cumulative_return(post_30m),
         f"{t}_ret_60m"     : compute_cumulative_return(post_60m),
     }
 
 
-# ---------------------------------------------------------------------------
-# 7. Main pipeline
-# ---------------------------------------------------------------------------
+
+
+
 
 def build_dataset(events_path: str, output_path: str) -> pd.DataFrame:
     """
@@ -333,10 +333,10 @@ def build_dataset(events_path: str, output_path: str) -> pd.DataFrame:
 
     for _, row in events.iterrows():
         event_id   = row["event_id"]
-        event_ts   = row["timestamp"]          # already ET-aware
+        event_ts   = row["timestamp"]
         event_name = row["event_name"]
 
-        # Define a ±FETCH_BUFFER_DAYS window for the Yahoo download
+
         date_str  = event_ts.date().isoformat()
         start_dt  = (event_ts - pd.Timedelta(days=FETCH_BUFFER_DAYS)).date().isoformat()
         end_dt    = (event_ts + pd.Timedelta(days=FETCH_BUFFER_DAYS + 1)).date().isoformat()
@@ -385,7 +385,7 @@ def build_dataset(events_path: str, output_path: str) -> pd.DataFrame:
 
     output_df = pd.DataFrame(results)
 
-    # Reorder columns for readability
+
     id_cols     = ["event_id", "timestamp", "event_name", "event_category", "event_flag"]
     metric_cols = [c for c in output_df.columns if c not in id_cols]
     output_df   = output_df[id_cols + sorted(metric_cols)]
@@ -396,9 +396,9 @@ def build_dataset(events_path: str, output_path: str) -> pd.DataFrame:
     return output_df
 
 
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(

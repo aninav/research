@@ -36,19 +36,19 @@ import pandas as pd
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
+
+
+
 THIS_DIR        = Path(__file__).resolve().parent
 DATA_DIR        = THIS_DIR.parent / "data"
 EVENTS_PATH     = DATA_DIR / "events.csv"
 MARKET_PATH     = THIS_DIR / "event_market_data.csv"
 OUTPUT_PATH     = DATA_DIR / "master_dataset.csv"
 
-# ---------------------------------------------------------------------------
-# Keyword dictionaries
-# Each key = feature name, value = list of terms to search for in event_name
-# ---------------------------------------------------------------------------
+
+
+
+
 KEYWORD_FLAGS = {
     "kw_inflation"     : ["cpi", "inflation", "price", "pce"],
     "kw_labor"         : ["labor", "employment", "jobs", "nfp", "payroll", "unemployment"],
@@ -64,9 +64,9 @@ ENTITY_FLAGS = {
     "ent_census"       : ["retail", "census"],
 }
 
-# ---------------------------------------------------------------------------
-# 1. Sentiment scoring
-# ---------------------------------------------------------------------------
+
+
+
 
 def load_sentiment_model():
     """
@@ -98,7 +98,7 @@ def score_sentiment_finbert(text: str, classifier) -> float:
     Positive label → +score, Negative → -score, Neutral → 0.
     """
     try:
-        results = classifier(text[:512])[0]  # truncate to BERT max
+        results = classifier(text[:512])[0]
         scores  = {r["label"].lower(): r["score"] for r in results}
         return float(scores.get("positive", 0) - scores.get("negative", 0))
     except Exception as e:
@@ -147,7 +147,7 @@ def compute_sentiment(events_df: pd.DataFrame) -> pd.Series:
 
     scores = []
     for _, row in events_df.iterrows():
-        # Use real headline if available, fall back to event name + category
+
         text = headlines.get(row["event_id"], "")
         if not text:
             text = f"{row['event_name']} {row['event_category']}"
@@ -161,9 +161,9 @@ def compute_sentiment(events_df: pd.DataFrame) -> pd.Series:
     return pd.Series(scores, index=events_df.index, name="sentiment_score")
 
 
-# ---------------------------------------------------------------------------
-# 2. Keyword and entity flags
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_keyword_flags(events_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -188,9 +188,9 @@ def compute_keyword_flags(events_df: pd.DataFrame) -> pd.DataFrame:
     return flag_df
 
 
-# ---------------------------------------------------------------------------
-# 3. Event category dummies
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_category_dummies(events_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -202,9 +202,9 @@ def compute_category_dummies(events_df: pd.DataFrame) -> pd.DataFrame:
     return dummies
 
 
-# ---------------------------------------------------------------------------
-# 4. Time features
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_time_features(events_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -227,22 +227,22 @@ def compute_time_features(events_df: pd.DataFrame) -> pd.DataFrame:
     return time_df
 
 
-# ---------------------------------------------------------------------------
-# 5. Main merge pipeline
-# ---------------------------------------------------------------------------
+
+
+
 
 def build_master_dataset() -> pd.DataFrame:
     """
     Load events + market data, extract all features, merge into one CSV.
     """
-    # --- load events ---
+
     if not EVENTS_PATH.exists():
         log.error("events.csv not found at: %s", EVENTS_PATH)
         sys.exit(1)
     events = pd.read_csv(EVENTS_PATH)
     log.info("Loaded %d events from events.csv", len(events))
 
-    # --- load market data ---
+
     if not MARKET_PATH.exists():
         log.error(
             "event_market_data.csv not found at: %s\n"
@@ -252,17 +252,17 @@ def build_master_dataset() -> pd.DataFrame:
     market = pd.read_csv(MARKET_PATH)
     log.info("Loaded %d rows from event_market_data.csv", len(market))
 
-    # --- merge on event_id ---
-    df = pd.merge(market, events[["event_id", "event_name", "event_category"]], 
+
+    df = pd.merge(market, events[["event_id", "event_name", "event_category"]],
                   on="event_id", how="left", suffixes=("", "_ev"))
 
-    # Use event_name and event_category from market file if already present
+
     if "event_name_ev" in df.columns:
         df = df.drop(columns=["event_name_ev", "event_category_ev"], errors="ignore")
 
     log.info("Merged dataset: %d rows", len(df))
 
-    # --- extract features ---
+
     log.info("Extracting sentiment scores...")
     df["sentiment_score"] = compute_sentiment(df).values
 
@@ -278,19 +278,19 @@ def build_master_dataset() -> pd.DataFrame:
     time_feats = compute_time_features(df)
     df = pd.concat([df, time_feats], axis=1)
 
-    # --- clean up column ordering ---
+
     id_cols      = ["event_id", "timestamp", "event_name", "event_category", "event_flag"]
     market_cols  = sorted([c for c in df.columns if "_rv_" in c or "_ret_" in c])
     feature_cols = sorted([c for c in df.columns if c not in id_cols + market_cols])
     df = df[id_cols + market_cols + feature_cols]
 
-    # --- save ---
+
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(OUTPUT_PATH, index=False)
     log.info("Saved master dataset (%d rows × %d cols) to: %s",
              len(df), len(df.columns), OUTPUT_PATH)
 
-    # --- preview ---
+
     print("\n=== Column summary ===")
     print(f"  ID + metadata    : {len(id_cols)} cols")
     print(f"  Market metrics   : {len(market_cols)} cols")

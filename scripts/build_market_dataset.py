@@ -30,12 +30,12 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-# Local data layer — sits in the same scripts/ folder
+
 from market_data import MarketDataFetcher, load_or_fetch_full_data, slice_event_window
 
-# ---------------------------------------------------------------------------
-# Logging setup
-# ---------------------------------------------------------------------------
+
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s | %(message)s",
@@ -44,25 +44,25 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+
+
+
 TICKERS = ["SPY", "QQQ"]
 
-# 5-minute bar counts for each window
-BARS_PRE_30M  = 6   # 30 min pre-event  (6 × 5 min)
-BARS_POST_5M  = 1   # 5 min post-event  (1 × 5 min)
-BARS_POST_30M = 6   # 30 min post-event (6 × 5 min)
-BARS_POST_60M = 12  # 60 min post-event (12 × 5 min)
 
-# Cache lives in research_model/data/ (one level up from scripts/)
+BARS_PRE_30M  = 6
+BARS_POST_5M  = 1
+BARS_POST_30M = 6
+BARS_POST_60M = 12
+
+
 THIS_DIR  = Path(__file__).resolve().parent
 CACHE_DIR = THIS_DIR.parent / "data" / "cache"
 
 
-# ---------------------------------------------------------------------------
-# 1. Load events
-# ---------------------------------------------------------------------------
+
+
+
 
 def load_events(filepath: str) -> pd.DataFrame:
     """
@@ -82,15 +82,15 @@ def load_events(filepath: str) -> pd.DataFrame:
     log.info("Loading events from: %s", filepath)
     df = pd.read_csv(filepath, dtype=str)
 
-    # --- column check ---
+
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(f"events.csv is missing required columns: {missing}")
 
-    # --- strip whitespace ---
+
     df = df.apply(lambda col: col.str.strip() if col.dtype == "object" else col)
 
-    # --- parse timestamp ---
+
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     bad_ts = df["timestamp"].isna()
     if bad_ts.any():
@@ -98,17 +98,17 @@ def load_events(filepath: str) -> pd.DataFrame:
                     bad_ts.sum(), df.loc[bad_ts, "event_id"].tolist())
     df = df[~bad_ts].copy()
 
-    # --- localise to Eastern (events.csv is assumed ET) ---
+
     df["timestamp"] = df["timestamp"].dt.tz_localize("America/New_York", ambiguous="infer")
 
-    # --- duplicate event_id check ---
+
     dupes = df.duplicated(subset="event_id", keep=False)
     if dupes.any():
         log.warning("Dropping %d rows with duplicate event_id values: %s",
                     dupes.sum(), df.loc[dupes, "event_id"].tolist())
         df = df[~dupes].copy()
 
-    # --- event_flag must be numeric ---
+
     df["event_flag"] = pd.to_numeric(df["event_flag"], errors="coerce")
     bad_flag = df["event_flag"].isna()
     if bad_flag.any():
@@ -121,9 +121,9 @@ def load_events(filepath: str) -> pd.DataFrame:
     return df
 
 
-# ---------------------------------------------------------------------------
-# 2. Download market data  ← REPLACED: yfinance → Twelve Data
-# ---------------------------------------------------------------------------
+
+
+
 
 def download_market_data(
     fetcher: MarketDataFetcher,
@@ -166,16 +166,16 @@ def download_market_data(
         log.warning("No data returned for %s around %s", ticker, event_ts)
         return pd.DataFrame()
 
-    # Rename 'close' → 'Close' to preserve compatibility with the rest of the pipeline
+
     df = df[["close"]].rename(columns={"close": "Close"})
     df.index.name = "datetime"
 
     return df
 
 
-# ---------------------------------------------------------------------------
-# 3. Log returns  (unchanged)
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_log_returns(prices: pd.Series) -> pd.Series:
     """
@@ -186,9 +186,9 @@ def compute_log_returns(prices: pd.Series) -> pd.Series:
     return np.log(prices / prices.shift(1))
 
 
-# ---------------------------------------------------------------------------
-# 4. Realized volatility  (unchanged)
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_realized_volatility(log_returns: pd.Series) -> float:
     """
@@ -202,9 +202,9 @@ def compute_realized_volatility(log_returns: pd.Series) -> float:
     return float(np.sqrt((r ** 2).sum()))
 
 
-# ---------------------------------------------------------------------------
-# 5. Cumulative return  (unchanged)
-# ---------------------------------------------------------------------------
+
+
+
 
 def compute_cumulative_return(prices: pd.Series) -> float:
     """
@@ -218,9 +218,9 @@ def compute_cumulative_return(prices: pd.Series) -> float:
     return float(np.log(prices.iloc[-1] / prices.iloc[0]))
 
 
-# ---------------------------------------------------------------------------
-# 6. Extract window metrics  (unchanged)
-# ---------------------------------------------------------------------------
+
+
+
 
 def extract_event_window_metrics(
     price_series: pd.Series,
@@ -253,14 +253,14 @@ def extract_event_window_metrics(
     -------
     dict of computed metrics, or None if the event should be skipped.
     """
-    # Normalize index to UTC for comparison — cached data uses fixed offset
-    # (UTC-05:00) while event timestamps use America/New_York zone object.
-    # Converting both to UTC ensures correct bar lookup regardless of tz type.
+
+
+
     price_utc = price_series.copy()
     price_utc.index = price_series.index.tz_convert("UTC")
     event_utc = event_ts.astimezone(ZoneInfo("UTC"))
 
-    # First bar at or after the event timestamp
+
     future_bars = price_utc.index[price_utc.index >= event_utc]
     if future_bars.empty:
         log.warning("SKIP event_id=%s (%s): no bars at or after event timestamp.", event_id, ticker)
@@ -268,10 +268,10 @@ def extract_event_window_metrics(
 
     event_bar_idx = price_utc.index.get_loc(future_bars[0])
 
-    # --- pre-event slice ---
-    # For pre-market events there are 0 same-day bars before the event.
-    # We walk backwards in the full (multi-day) price series to find
-    # BARS_PRE_30M bars, which will come from the previous day's close.
+
+
+
+
     pre_start_idx = event_bar_idx - BARS_PRE_30M
     if pre_start_idx < 0:
         log.info(
@@ -279,26 +279,26 @@ def extract_event_window_metrics(
             "bars as pre-event baseline (have %d bars before event in series).",
             event_id, ticker, event_bar_idx,
         )
-        # Use however many bars we have before the event, up to BARS_PRE_30M
+
         pre_start_idx = max(0, event_bar_idx - BARS_PRE_30M)
         if event_bar_idx == 0:
             log.warning("SKIP event_id=%s (%s): no bars at all before event.", event_id, ticker)
             return None
 
-    # --- post-event slice ---
+
     post_end_idx = event_bar_idx + BARS_POST_60M
     if post_end_idx > len(price_series):
         log.warning("SKIP event_id=%s (%s): insufficient post-event bars (need %d, have %d after event).",
                     event_id, ticker, BARS_POST_60M, len(price_series) - event_bar_idx)
         return None
 
-    # --- price slices ---
+
     pre_prices = price_series.iloc[pre_start_idx : event_bar_idx]
     post_5m    = price_series.iloc[event_bar_idx : event_bar_idx + BARS_POST_5M  + 1]
     post_30m   = price_series.iloc[event_bar_idx : event_bar_idx + BARS_POST_30M + 1]
     post_60m   = price_series.iloc[event_bar_idx : event_bar_idx + BARS_POST_60M + 1]
 
-    # --- log returns ---
+
     pre_prices_with_anchor      = price_series.iloc[max(0, pre_start_idx - 1) : event_bar_idx]
     pre_returns                 = compute_log_returns(pre_prices_with_anchor)
 
@@ -322,9 +322,9 @@ def extract_event_window_metrics(
     }
 
 
-# ---------------------------------------------------------------------------
-# 7. Main pipeline
-# ---------------------------------------------------------------------------
+
+
+
 
 def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.DataFrame:
     """
@@ -357,7 +357,7 @@ def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.D
         events = events.head(limit)
         log.info("Limit set: processing first %d events only.", limit)
 
-    # Step 2: load full history for both tickers (memory -> CSV -> download)
+
     log.info("=== Loading full 5-min history (no per-event API calls) ===")
     full_data: dict[str, pd.DataFrame] = {}
     api_key = os.environ.get("TWELVE_DATA_API_KEY", "")
@@ -374,7 +374,7 @@ def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.D
         log.info("%s: %d bars in memory (%s -> %s)",
                  ticker, len(df), df.index.min().date(), df.index.max().date())
 
-    # Step 3: event loop - pure in-memory slicing, zero API calls
+
     log.info("=== Computing event window metrics (slicing from memory) ===")
     results = []
     skipped = 0
@@ -397,7 +397,7 @@ def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.D
         valid_event = True
 
         for ticker in TICKERS:
-            # Slice in memory - no API call
+
             window_df = slice_event_window(
                 full_df=full_data[ticker],
                 event_ts=event_ts,
@@ -452,9 +452,9 @@ def build_dataset(events_path: str, output_path: str, limit: int = None) -> pd.D
     return output_df
 
 
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(

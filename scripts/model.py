@@ -47,9 +47,9 @@ from sklearn.preprocessing import StandardScaler
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
+
+
+
 THIS_DIR    = Path(__file__).resolve().parent
 DATA_DIR    = THIS_DIR.parent / "data"
 TABLES_DIR  = DATA_DIR / "tables"
@@ -58,9 +58,9 @@ MASTER_PATH = DATA_DIR / "master_dataset.csv"
 
 TICKERS = ["SPY", "QQQ"]
 
-# ---------------------------------------------------------------------------
-# Feature selection
-# ---------------------------------------------------------------------------
+
+
+
 
 def get_feature_cols(df: pd.DataFrame) -> list[str]:
     """
@@ -92,9 +92,9 @@ def prepare_Xy(df: pd.DataFrame, target_col: str) -> tuple[pd.DataFrame, pd.Seri
     return X, y
 
 
-# ---------------------------------------------------------------------------
-# Model definitions
-# ---------------------------------------------------------------------------
+
+
+
 
 def build_models() -> dict:
     return {
@@ -119,9 +119,9 @@ def build_models() -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Evaluation
-# ---------------------------------------------------------------------------
+
+
+
 
 def evaluate_model(model, X: pd.DataFrame, y: pd.Series, cv: int = 5) -> dict:
     """
@@ -147,7 +147,7 @@ def evaluate_model(model, X: pd.DataFrame, y: pd.Series, cv: int = 5) -> dict:
     neg_mae = cross_val_score(model, X, y, cv=kf, scoring="neg_mean_absolute_error")
     r2      = cross_val_score(model, X, y, cv=kf, scoring="r2")
 
-    # Refit on full data for feature importance and predictions
+
     model.fit(X, y)
 
     return {
@@ -160,9 +160,9 @@ def evaluate_model(model, X: pd.DataFrame, y: pd.Series, cv: int = 5) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Table 5: Model performance
-# ---------------------------------------------------------------------------
+
+
+
 
 def table5_model_performance(df: pd.DataFrame) -> pd.DataFrame:
     rows   = []
@@ -197,9 +197,9 @@ def table5_model_performance(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Table 6: Feature importance (Random Forest)
-# ---------------------------------------------------------------------------
+
+
+
 
 def table6_feature_importance(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
@@ -235,9 +235,9 @@ def table6_feature_importance(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Figures
-# ---------------------------------------------------------------------------
+
+
+
 
 def figure4_predictions(df: pd.DataFrame) -> None:
     """
@@ -318,9 +318,9 @@ def figure5_feature_importance(df: pd.DataFrame) -> None:
     log.info("Figure 5 saved: %s", out)
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+
+
+
 
 def run_models() -> None:
     TABLES_DIR.mkdir(parents=True, exist_ok=True)

@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend for saving figures
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -35,9 +35,9 @@ from scipy import stats
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
+
+
+
 THIS_DIR    = Path(__file__).resolve().parent
 DATA_DIR    = THIS_DIR.parent / "data"
 TABLES_DIR  = DATA_DIR / "tables"
@@ -47,9 +47,9 @@ MASTER_PATH = DATA_DIR / "master_dataset.csv"
 TICKERS  = ["SPY", "QQQ"]
 WINDOWS  = ["5m", "30m", "60m"]
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+
+
+
 
 def load_master(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -77,9 +77,9 @@ def ret_cols(ticker: str) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Table 1: Summary statistics
-# ---------------------------------------------------------------------------
+
+
+
 
 def table1_summary_stats(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -97,9 +97,9 @@ def table1_summary_stats(df: pd.DataFrame) -> pd.DataFrame:
     return summary
 
 
-# ---------------------------------------------------------------------------
-# Table 2: Pre vs post RV by event category
-# ---------------------------------------------------------------------------
+
+
+
 
 def table2_rv_by_category(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -119,7 +119,7 @@ def table2_rv_by_category(df: pd.DataFrame) -> pd.DataFrame:
                 "rv_post_30m"   : grp[cols["post_30m"]].mean(),
                 "rv_post_60m"   : grp[cols["post_60m"]].mean(),
             }
-            # ratio: how much larger is post-30m RV vs pre-30m RV?
+
             if row["rv_pre_30m"] and row["rv_pre_30m"] > 0:
                 row["rv_ratio_30m"] = row["rv_post_30m"] / row["rv_pre_30m"]
             else:
@@ -133,9 +133,9 @@ def table2_rv_by_category(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Table 3: T-tests — pre vs post RV
-# ---------------------------------------------------------------------------
+
+
+
 
 def table3_ttest_results(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -159,7 +159,7 @@ def table3_ttest_results(df: pd.DataFrame) -> pd.DataFrame:
             for window in ["post_5m", "post_30m", "post_60m"]:
                 post = subset[cols[window]].dropna()
 
-                # align indices for paired test
+
                 aligned = pd.concat([pre, post], axis=1).dropna()
                 if len(aligned) < 5:
                     continue
@@ -192,9 +192,9 @@ def table3_ttest_results(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Table 4: Cumulative returns by event category
-# ---------------------------------------------------------------------------
+
+
+
 
 def table4_return_by_category(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -223,9 +223,9 @@ def table4_return_by_category(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Figures
-# ---------------------------------------------------------------------------
+
+
+
 
 def figure1_rv_comparison(df: pd.DataFrame) -> None:
     """
@@ -303,7 +303,7 @@ def figure3_return_distribution(df: pd.DataFrame) -> None:
 
     for ax, ticker in zip(axes, TICKERS):
         col  = f"{ticker}_ret_30m"
-        data = df[col].dropna() * 100  # convert to percent
+        data = df[col].dropna() * 100
 
         ax.hist(data, bins=20, color="#4C8BE8", alpha=0.8, edgecolor="white")
         ax.axvline(0, color="black", linewidth=1, linestyle="--", alpha=0.6)
@@ -322,9 +322,9 @@ def figure3_return_distribution(df: pd.DataFrame) -> None:
     log.info("Figure 3 saved: %s", out)
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+
+
+
 
 def run_analysis() -> None:
     TABLES_DIR.mkdir(parents=True, exist_ok=True)

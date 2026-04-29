@@ -24,11 +24,11 @@ from pathlib import Path
 THIS_DIR    = Path(__file__).resolve().parent
 OUTPUT_PATH = THIS_DIR.parent / "data" / "events.csv"
 
-# helpers
+
 def monthly(name, cat, dates):
     return [(name, cat, d) for d in dates]
 
-# ── CPI ── inflation ── BLS ── 08:30 ── monthly ──────────────────────────────
+
 CPI_RELEASES = [
     ("CPI","inflation","2015-01-16 08:30:00"),("CPI","inflation","2015-02-26 08:30:00"),
     ("CPI","inflation","2015-03-24 08:30:00"),("CPI","inflation","2015-04-17 08:30:00"),
@@ -98,7 +98,7 @@ CPI_RELEASES = [
     ("CPI","inflation","2025-11-13 08:30:00"),("CPI","inflation","2025-12-10 08:30:00"),
 ]
 
-# ── PPI ── inflation ── BLS ── 08:30 ── monthly ──────────────────────────────
+
 PPI_RELEASES = [
     ("PPI","inflation","2015-01-16 08:30:00"),("PPI","inflation","2015-02-19 08:30:00"),
     ("PPI","inflation","2015-03-12 08:30:00"),("PPI","inflation","2015-04-09 08:30:00"),
@@ -168,7 +168,7 @@ PPI_RELEASES = [
     ("PPI","inflation","2025-11-13 08:30:00"),("PPI","inflation","2025-12-11 08:30:00"),
 ]
 
-# ── FOMC ── monetary_policy ── Fed ── 14:00 ── ~8x/year ─────────────────────
+
 FOMC_RELEASES = [
     ("FOMC Rate Decision","monetary_policy","2015-01-28 14:00:00"),
     ("FOMC Rate Decision","monetary_policy","2015-03-18 14:00:00"),
@@ -261,7 +261,7 @@ FOMC_RELEASES = [
     ("FOMC Rate Decision","monetary_policy","2025-12-10 14:00:00"),
 ]
 
-# ── NFP ── labor ── BLS ── 08:30 ── monthly (1st Friday) ────────────────────
+
 LABOR_RELEASES = [
     ("Labor Report","labor","2015-01-09 08:30:00"),("Labor Report","labor","2015-02-06 08:30:00"),
     ("Labor Report","labor","2015-03-06 08:30:00"),("Labor Report","labor","2015-04-03 08:30:00"),
@@ -331,7 +331,7 @@ LABOR_RELEASES = [
     ("Labor Report","labor","2025-11-07 08:30:00"),("Labor Report","labor","2025-12-05 08:30:00"),
 ]
 
-# ── JOLTS ── labor ── BLS ── 10:00 ── monthly ────────────────────────────────
+
 JOLTS_RELEASES = [
     ("JOLTS","labor","2015-01-13 10:00:00"),("JOLTS","labor","2015-02-10 10:00:00"),
     ("JOLTS","labor","2015-03-10 10:00:00"),("JOLTS","labor","2015-04-07 10:00:00"),
@@ -401,7 +401,7 @@ JOLTS_RELEASES = [
     ("JOLTS","labor","2025-11-04 10:00:00"),("JOLTS","labor","2025-12-02 10:00:00"),
 ]
 
-# ── GDP Advance ── growth ── BEA ── 08:30 ── quarterly ───────────────────────
+
 GDP_RELEASES = [
     ("GDP","growth","2015-01-30 08:30:00"),("GDP","growth","2015-04-29 08:30:00"),
     ("GDP","growth","2015-07-30 08:30:00"),("GDP","growth","2015-10-29 08:30:00"),
@@ -427,7 +427,7 @@ GDP_RELEASES = [
     ("GDP","growth","2025-07-30 08:30:00"),("GDP","growth","2025-10-30 08:30:00"),
 ]
 
-# ── ISM Manufacturing PMI ── growth ── ISM ── 10:00 ── monthly (1st biz day) ─
+
 ISM_RELEASES = [
     ("ISM Manufacturing PMI","growth","2015-01-02 10:00:00"),("ISM Manufacturing PMI","growth","2015-02-02 10:00:00"),
     ("ISM Manufacturing PMI","growth","2015-03-02 10:00:00"),("ISM Manufacturing PMI","growth","2015-04-01 10:00:00"),
@@ -497,7 +497,7 @@ ISM_RELEASES = [
     ("ISM Manufacturing PMI","growth","2025-11-03 10:00:00"),("ISM Manufacturing PMI","growth","2025-12-01 10:00:00"),
 ]
 
-# ── Retail Sales ── consumption ── Census ── 08:30 ── monthly ────────────────
+
 RETAIL_SALES_RELEASES = [
     ("Retail Sales","consumption","2015-01-14 08:30:00"),("Retail Sales","consumption","2015-02-12 08:30:00"),
     ("Retail Sales","consumption","2015-03-12 08:30:00"),("Retail Sales","consumption","2015-04-14 08:30:00"),
@@ -567,7 +567,7 @@ RETAIL_SALES_RELEASES = [
     ("Retail Sales","consumption","2025-11-14 08:30:00"),("Retail Sales","consumption","2025-12-16 08:30:00"),
 ]
 
-# ── Consumer Confidence ── consumption ── Conf. Board ── 10:00 ── monthly ────
+
 CONSUMER_CONFIDENCE_RELEASES = [
     ("Consumer Confidence","consumption","2015-01-27 10:00:00"),("Consumer Confidence","consumption","2015-02-24 10:00:00"),
     ("Consumer Confidence","consumption","2015-03-31 10:00:00"),("Consumer Confidence","consumption","2015-04-28 10:00:00"),
@@ -637,7 +637,7 @@ CONSUMER_CONFIDENCE_RELEASES = [
     ("Consumer Confidence","consumption","2025-11-25 10:00:00"),("Consumer Confidence","consumption","2025-12-23 10:00:00"),
 ]
 
-# ── PCE ── consumption ── BEA ── 08:30 ── monthly (Personal Income & Outlays) ─
+
 PCE_RELEASES = [
     ("PCE","consumption","2015-01-30 08:30:00"),("PCE","consumption","2015-03-02 08:30:00"),
     ("PCE","consumption","2015-03-27 08:30:00"),("PCE","consumption","2015-04-30 08:30:00"),

@@ -51,9 +51,9 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
+
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -61,16 +61,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+
+
+
 BASE_URL           = "https://api.twelvedata.com/time_series"
 INTERVAL           = "5min"
-MAX_BARS_PER_CALL  = 5000          # Twelve Data hard maximum per request
-CALLS_PER_MINUTE   = 8             # free plan: 8 req/min
-DELAY_BETWEEN_CALLS = 60 / CALLS_PER_MINUTE + 1  # ~8.5 s — slight buffer
+MAX_BARS_PER_CALL  = 5000
+CALLS_PER_MINUTE   = 8
+DELAY_BETWEEN_CALLS = 60 / CALLS_PER_MINUTE + 1
 MAX_RETRIES        = 3
-RETRY_BACKOFF_SEC  = 15            # wait between retry attempts
+RETRY_BACKOFF_SEC  = 15
 
 NY_TZ  = ZoneInfo("America/New_York")
 
@@ -78,12 +78,12 @@ THIS_DIR   = Path(__file__).resolve().parent
 CACHE_DIR  = THIS_DIR.parent / "data" / "cache"
 
 DEFAULT_TICKERS    = ["SPY", "QQQ"]
-DEFAULT_START_DATE = "2015-01-01"  # gives ~10 years; adjust as needed
+DEFAULT_START_DATE = "2015-01-01"
 
 
-# ---------------------------------------------------------------------------
-# Core fetcher
-# ---------------------------------------------------------------------------
+
+
+
 
 class FullDataFetcher:
     """
@@ -109,9 +109,9 @@ class FullDataFetcher:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._last_call_time = 0.0
 
-    # ------------------------------------------------------------------
-    # Public
-    # ------------------------------------------------------------------
+
+
+
 
     def fetch_ticker(
         self,
@@ -128,7 +128,7 @@ class FullDataFetcher:
         ticker     = ticker.upper()
         start_dt   = pd.Timestamp(start_date, tz=NY_TZ)
         end_dt     = pd.Timestamp(end_date or date.today().isoformat(), tz=NY_TZ)
-        end_dt     = end_dt.replace(hour=16, minute=0, second=0)  # market close
+        end_dt     = end_dt.replace(hour=16, minute=0, second=0)
 
         log.info("=" * 60)
         log.info("Fetching %s | %s → %s", ticker, start_date, end_dt.date())
@@ -136,7 +136,7 @@ class FullDataFetcher:
 
         out_path = self.cache_dir / f"{ticker}_full_5min.csv"
 
-        # --- resume: load existing data so we skip already-fetched bars ---
+
         existing = self._load_existing(out_path, ticker)
         if existing is not None:
             earliest_cached = existing.index.min()
@@ -147,7 +147,7 @@ class FullDataFetcher:
                     ticker, earliest_cached,
                 )
                 return existing
-            # resume from just before earliest cached bar
+
             end_dt = earliest_cached - timedelta(minutes=5)
             log.info(
                 "%s: resuming download from %s (earliest cached bar: %s).",
@@ -178,7 +178,7 @@ class FullDataFetcher:
                 log.info("%s: reached start date %s. Stopping.", ticker, start_date)
                 break
 
-            # Next chunk ends just before the earliest bar of this chunk
+
             chunk_end = chunk_earliest - timedelta(minutes=5)
 
         if not chunks:
@@ -187,7 +187,7 @@ class FullDataFetcher:
                 return existing
             return pd.DataFrame()
 
-        # Combine new chunks with any previously cached data
+
         all_frames = chunks
         if existing is not None:
             all_frames.append(existing)
@@ -195,7 +195,7 @@ class FullDataFetcher:
         full_df = pd.concat(all_frames)
         full_df = self._clean(full_df, start_dt)
 
-        # Save to CSV
+
         full_df.to_csv(out_path)
         log.info(
             "%s: saved %d bars to %s  (%.1f MB)",
@@ -206,9 +206,9 @@ class FullDataFetcher:
         )
         return full_df
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+
+
+
 
     def _fetch_chunk(
         self,
@@ -254,7 +254,7 @@ class FullDataFetcher:
 
             values = payload.get("values")
             if not values:
-                return None  # no data for this range (e.g. weekend / holiday)
+                return None
 
             df = self._parse(values)
             log.info(
@@ -271,7 +271,7 @@ class FullDataFetcher:
         df = pd.DataFrame(values)
         df["datetime"] = pd.to_datetime(df["datetime"])
 
-        # Twelve Data returns naive strings in the requested timezone
+
         df["datetime"] = df["datetime"].dt.tz_localize(NY_TZ, ambiguous="infer")
         df = df.set_index("datetime").sort_index()
 
@@ -290,13 +290,13 @@ class FullDataFetcher:
         df = df[~df.index.duplicated(keep="first")]
         df = df.sort_index()
 
-        # Keep only regular trading hours: 09:30–16:00 ET
+
         df = df.between_time("09:30", "16:00")
 
-        # Drop pre-start-date bars
+
         df = df[df.index >= start_dt]
 
-        # Drop bars with missing close
+
         df = df.dropna(subset=["close"])
 
         return df
@@ -331,19 +331,19 @@ class FullDataFetcher:
         self._last_call_time = time.time()
 
 
-# ---------------------------------------------------------------------------
-# Dry-run estimator
-# ---------------------------------------------------------------------------
+
+
+
 
 def estimate_calls(start_date: str, tickers: list[str]) -> None:
     """Print an estimate of API calls needed without making any requests."""
     start = pd.Timestamp(start_date)
     end   = pd.Timestamp(date.today().isoformat())
     total_days    = (end - start).days
-    # ~252 trading days/year, ~78 bars/day → bars per year ≈ 19,656
+
     trading_days  = int(total_days * 252 / 365)
-    bars_per_ticker = trading_days * 78           # 78 five-minute bars in 9:30–16:00
-    calls_per_ticker = -(-bars_per_ticker // MAX_BARS_PER_CALL)  # ceiling division
+    bars_per_ticker = trading_days * 78
+    calls_per_ticker = -(-bars_per_ticker // MAX_BARS_PER_CALL)
 
     print("\n── Dry-run estimate ──────────────────────────────────────")
     print(f"  Date range     : {start_date} → {end.date()}")
@@ -356,9 +356,9 @@ def estimate_calls(start_date: str, tickers: list[str]) -> None:
     print("──────────────────────────────────────────────────────────\n")
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+
+
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(

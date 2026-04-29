@@ -33,25 +33,25 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# ── Logging setup ────────────────────────────────────────────────────────────
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 log = logging.getLogger(__name__)
 
-# ── Constants ────────────────────────────────────────────────────────────────
+
 TWELVE_DATA_BASE_URL = "https://api.twelvedata.com/time_series"
 TICKERS              = ["SPY", "QQQ"]
 INTERVAL             = "5min"
 NY_TZ                = ZoneInfo("America/New_York")
 UTC_TZ               = ZoneInfo("UTC")
 
-# Free plan: 800 requests/day, 8 requests/minute
-REQUESTS_PER_MINUTE  = 8
-REQUEST_DELAY_SEC    = 60 / REQUESTS_PER_MINUTE  # ~7.5 seconds between calls
 
-# ── Full-cache paths (written by fetch_full_data.py) ─────────────────────────
+REQUESTS_PER_MINUTE  = 8
+REQUEST_DELAY_SEC    = 60 / REQUESTS_PER_MINUTE
+
+
 THIS_DIR         = Path(__file__).resolve().parent
 FULL_CACHE_DIR   = THIS_DIR.parent / "data" / "cache"
 FULL_CACHE_PATHS = {
@@ -59,11 +59,11 @@ FULL_CACHE_PATHS = {
     for ticker in TICKERS
 }
 
-# ── In-memory store so we only parse the CSV once per process ─────────────────
+
 _FULL_CACHE: dict[str, pd.DataFrame] = {}
 
 
-# ── New primary interface: bulk cache ─────────────────────────────────────────
+
 
 def load_or_fetch_full_data(
     ticker: str,
@@ -98,7 +98,7 @@ def load_or_fetch_full_data(
     """
     ticker = ticker.upper()
 
-    # 1 ── in-memory hit
+
     if ticker in _FULL_CACHE:
         log.debug("Full cache HIT (memory): %s", ticker)
         return _FULL_CACHE[ticker]
@@ -108,7 +108,7 @@ def load_or_fetch_full_data(
         log.error("Unknown ticker: %s", ticker)
         return pd.DataFrame()
 
-    # 2 ── CSV hit
+
     if csv_path.exists():
         df = _load_full_csv(csv_path, ticker)
         if df is not None and not df.empty:
@@ -116,7 +116,7 @@ def load_or_fetch_full_data(
             return df
         log.warning("Cached CSV for %s exists but could not be loaded.", ticker)
 
-    # 3 ── download via fetch_full_data.py
+
     log.info(
         "%s: full cache CSV not found — running fetch_full_data.py to download.",
         ticker,
@@ -144,7 +144,7 @@ def load_or_fetch_full_data(
         log.error("fetch_full_data.py exited with code %d", result.returncode)
         return pd.DataFrame()
 
-    # Load the freshly written CSV
+
     if csv_path.exists():
         df = _load_full_csv(csv_path, ticker)
         if df is not None and not df.empty:
@@ -209,7 +209,7 @@ def _load_full_csv(path: Path, ticker: str) -> pd.DataFrame | None:
         return None
 
 
-# ── MarketDataFetcher ────────────────────────────────────────────────────────
+
 class MarketDataFetcher:
     """
     Downloads and caches 5-minute intraday bars from Twelve Data.
@@ -231,9 +231,9 @@ class MarketDataFetcher:
         self.api_key   = api_key
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
-        self._last_request_time = 0.0  # for rate limiting
+        self._last_request_time = 0.0
 
-    # ── Public interface ──────────────────────────────────────────────────────
+
 
     def get_bars_around_event(
         self,
@@ -263,16 +263,16 @@ class MarketDataFetcher:
 
         log.info(f"Fetching {ticker} | event: {event_dt} | window: ±{window_minutes}min")
 
-        # Pull data (from cache if available, else API)
+
         df = self._get_data(ticker, start_dt, end_dt)
 
         if df.empty:
             log.warning(f"No data returned for {ticker} around {event_dt}")
             return df
 
-        # Return the full series — trimming is handled in extract_event_window_metrics
-        # by bar index arithmetic, not by timestamp. Trimming here by end_dt cuts off
-        # post-event bars for pre-market events (08:30 ET) since end_dt = 10:00 AM.
+
+
+
         return df
 
         return df
@@ -306,7 +306,7 @@ class MarketDataFetcher:
                 except Exception as e:
                     log.error(f"Failed for {ticker} @ {event_time}: {e}")
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
+
 
     def _get_data(
         self,
@@ -318,10 +318,10 @@ class MarketDataFetcher:
         Check cache first; if miss, fetch from API and write to cache.
         Cache is keyed by ticker + date (one CSV per trading day).
         """
-        # Always include the previous calendar day so that pre-market events
-        # (e.g. CPI at 08:30 ET) have enough prior bars for the pre-event window.
-        # Also include the next calendar day to ensure enough post-event bars
-        # when the event occurs near market open (09:30 ET).
+
+
+
+
         start_dt_with_buffer = start_dt - timedelta(days=1)
         end_dt_with_buffer   = end_dt + timedelta(days=1)
         dates_needed = self._dates_in_range(start_dt_with_buffer, end_dt_with_buffer)
@@ -353,8 +353,8 @@ class MarketDataFetcher:
         Call Twelve Data API for one ticker on one trading day.
         Returns a DataFrame or None on failure.
         """
-        # Build start/end strings — start at 07:00 to capture pre-market
-        # events like CPI, NFP, GDP which release at 08:30 ET
+
+
         start_str = f"{date} 07:00:00"
         end_str   = f"{date} 16:30:00"
 
@@ -365,7 +365,7 @@ class MarketDataFetcher:
             "end_date":   end_str,
             "timezone":   "America/New_York",
             "format":     "JSON",
-            "outputsize": 200,   # enough for a full trading day at 5min
+            "outputsize": 200,
             "apikey":     self.api_key,
         }
 
@@ -379,7 +379,7 @@ class MarketDataFetcher:
             log.error(f"API request failed for {ticker} on {date}: {e}")
             return None
 
-        # Twelve Data returns {"status": "error", ...} on bad requests
+
         if payload.get("status") == "error":
             log.error(
                 f"Twelve Data error for {ticker} on {date}: "
@@ -402,12 +402,12 @@ class MarketDataFetcher:
         """
         df = pd.DataFrame(values)
 
-        # Parse datetime and set as index
+
         df["datetime"] = pd.to_datetime(df["datetime"])
         df["datetime"] = df["datetime"].dt.tz_localize(NY_TZ)
         df = df.set_index("datetime").sort_index()
 
-        # Cast OHLCV columns to float/int
+
         df = df.rename(columns={"volume": "volume"})
         for col in ["open", "high", "low", "close"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -415,7 +415,7 @@ class MarketDataFetcher:
 
         return df[["open", "high", "low", "close", "volume"]]
 
-    # ── Cache helpers ─────────────────────────────────────────────────────────
+
 
     def _cache_path(self, ticker: str, date) -> str:
         """Return the cache CSV path for a given ticker and date."""
@@ -429,9 +429,9 @@ class MarketDataFetcher:
 
         try:
             df = pd.read_csv(path, index_col="datetime", parse_dates=True)
-            # Normalize timezone: strip any existing tz then re-localize to NY
-            # This handles cases where pandas reads back UTC offset strings
-            # (-05:00, -04:00) as fixed offsets instead of America/New_York
+
+
+
             if df.index.tzinfo is not None:
                 df.index = df.index.tz_convert(NY_TZ)
             else:
@@ -451,7 +451,7 @@ class MarketDataFetcher:
         except Exception as e:
             log.warning(f"Cache write failed for {ticker} {date}: {e}")
 
-    # ── Rate limiting ─────────────────────────────────────────────────────────
+
 
     def _rate_limit_wait(self) -> None:
         """
@@ -465,7 +465,7 @@ class MarketDataFetcher:
             time.sleep(wait)
         self._last_request_time = time.time()
 
-    # ── Utility ───────────────────────────────────────────────────────────────
+
 
     @staticmethod
     def _parse_event_time(event_time: str | datetime) -> datetime:
@@ -494,7 +494,7 @@ class MarketDataFetcher:
         return dates
 
 
-# ── Quick test (run this file directly to verify your key works) ─────────────
+
 if __name__ == "__main__":
     import sys
 
@@ -506,7 +506,7 @@ if __name__ == "__main__":
         print(f"\nERROR: {e}")
         sys.exit(1)
 
-    # Test: fetch SPY bars around a known FOMC date
+
     test_event = "2024-03-20 14:00:00"
     print(f"\nTest: fetching SPY bars around {test_event}\n")
 
